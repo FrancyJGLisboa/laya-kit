@@ -28,7 +28,7 @@ gate.abstained  # True -> a person decides this one
 ## Install
 
 ```bash
-git clone <this repo> ~/projects/laya-kit && cd ~/projects/laya-kit
+git clone https://github.com/FrancyJGLisboa/laya-kit && cd laya-kit
 python3 -m venv .venv && .venv/bin/pip install -e ".[model]"
 .venv/bin/python examples/triage.py
 ```
