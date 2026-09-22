@@ -35,7 +35,8 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[model]"
 
 On **Intel macOS** the whole chain is pinned, because PyTorch stopped shipping Intel builds after
 2.2.2: use a Python 3.11 venv and `pip install -e ".[model-intel-macos]"`. The first run downloads
-~2.2 GB to `~/.cache/huggingface`; everything after that is offline.
+~2.2 GB to `~/.cache/huggingface`; everything after that is offline. Loading the model takes ~20 s
+once per process, so call `laya_kit.warm()` at startup if that matters.
 
 The pure-Python half (questions, gate, calibration) has no dependencies at all, so the tests run
 anywhere: `python3 -m unittest discover -s tests -t .`
