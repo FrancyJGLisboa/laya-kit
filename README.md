@@ -84,12 +84,27 @@ not an extrapolation — which is what `calibrate()` is for.
 Speed: about 1.5 s per question per item on a laptop CPU, milliseconds on a GPU. Model:
 [Laya](https://huggingface.co/convaiinnovations/laya), Apache-2.0.
 
+## As an agent skill
+
+`skills/laya/SKILL.md` teaches Claude Code, Codex, Copilot and Gemini when a local classifier
+is the right tool, how to write questions for a 512–1024 token context, and the five rules
+below. Install it alongside the package:
+
+```bash
+./scripts/install.sh          # symlinks into every CLI found (--copy, --uninstall)
+```
+
+Then ask the agent for a feature that needs a bounded judgment and it will reach for `/laya`.
+The companion skill for the hosted side of the same programming model is `typesafe-ai`; a
+design written against either ports to the other.
+
 ## Layout
 
 ```
 laya_kit/client.py   the model boundary: questions in, typed answers out
 laya_kit/policy.py   the gate: calibrate a threshold, decide or abstain
 examples/triage.py   a working tool in 70 lines
+skills/laya/         the agent skill (/laya), installed by scripts/install.sh
 tests/               14 tests, no model needed
 ```
 
