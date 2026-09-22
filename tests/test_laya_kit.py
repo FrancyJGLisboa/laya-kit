@@ -1,11 +1,12 @@
 import sys
 import types
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from laya_kit import Agent, ask, calibrate, choice, decide, load, noul, score  # noqa: E402
+from laya_kit import Agent, ask, calibrate, choice, decide, load, non_latin, noul, score  # noqa: E402
 from laya_kit import client, policy  # noqa: E402
 
 
@@ -140,3 +141,53 @@ class AgentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+KHMER = "សួស្តី ពិភពលោក"
+
+
+class ScriptTests(unittest.TestCase):
+    """An English checkpoint answers other scripts confidently and wrongly, so the script is
+    checked before the call and the gate refuses the answer whatever the confidence says."""
+
+    def confident(self, state, **kwargs):
+        agent = FakeAgent({"k": {"choice": "a", "confidence": 0.1,
+                                 "probabilities": {"a": 0.99, "b": 0.01}}})
+        with fake_laya(agent):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return ask(state, {"k": choice("q", {"a": "x", "b": "y"})}, **kwargs)["k"]
+
+    def test_latin_text_is_not_flagged(self):
+        self.assertEqual(non_latin("The export button returns a 500."), (0.0, None))
+
+    def test_another_script_is_named_with_its_share(self):
+        share, script = non_latin(KHMER)
+        self.assertEqual(script, "KHMER")
+        self.assertGreater(share, 0.9)
+
+    def test_a_stray_foreign_word_stays_under_the_limit(self):
+        share, script = non_latin("The reviewer signed off on the Q1 access review in Munchen" + "\u00e9")
+        self.assertLessEqual(share, client.NON_LATIN_LIMIT)
+
+    def test_off_script_state_is_refused_however_confident(self):
+        answer = self.confident(KHMER)
+        self.assertTrue(answer.out_of_script)
+        self.assertEqual(answer.confidence, 0.99)
+        gate = decide(answer, 0.5)
+        self.assertTrue(gate.abstained)
+        self.assertIsNone(gate.label)
+        self.assertEqual(gate.reason, "out_of_script:khmer")
+
+    def test_the_multilingual_checkpoint_is_not_guarded(self):
+        answer = self.confident(KHMER, checkpoint="multilingual")
+        self.assertFalse(answer.out_of_script)
+        self.assertFalse(decide(answer, 0.5).abstained)
+
+    def test_warns_before_the_call(self):
+        agent = FakeAgent()
+        with fake_laya(agent):
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                ask(KHMER, {"k": choice("q", {"a": "x", "b": "y"})})
+        self.assertTrue(any("KHMER" in str(w.message) for w in caught))

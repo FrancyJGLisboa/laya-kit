@@ -12,9 +12,9 @@
     answers["attested"].choice        # "yes"
     answers["attested"].confidence    # winning probability, comparable across providers
 """
-from .client import Agent, Answer, ask, choice, noul, score, load, warm
+from .client import Agent, Answer, ask, choice, noul, non_latin, score, load, warm
 from .policy import Gate, calibrate, decide
 
-__all__ = ["Agent", "Answer", "ask", "choice", "noul", "score", "load", "warm",
+__all__ = ["Agent", "Answer", "ask", "choice", "noul", "non_latin", "score", "load", "warm",
            "Gate", "calibrate", "decide"]
 __version__ = "0.1.0"

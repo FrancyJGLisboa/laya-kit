@@ -70,11 +70,11 @@ Every answer carries `.confidence`, **the winning probability**. That is the one
 that means the same thing across providers, so a threshold calibrated here transfers in
 meaning to a hosted classifier.
 
-## Six rules
+## Seven rules
 
 The first five came from running this model over 110 labelled decisions in a real
-internal-control test, not from documentation; the sixth is the model's own documented
-limit. Ignoring any of them produces a demo that does not survive contact with data.
+internal-control test, not from documentation; the last two are the model's own documented
+limits. Ignoring any of them produces a demo that does not survive contact with data.
 
 1. **Write short, contrastive criteria.** The context is 512–1024 tokens. Cutting criteria
    from ~900 characters to ~330 moved raw agreement from 90.0% to 93.6% and nearly doubled
@@ -100,6 +100,13 @@ limit. Ignoring any of them produces a demo that does not survive contact with d
    into a coarse choice plus a follow-up question, or ask several `noul()` questions —
    binary questions are where this model is strongest. Source:
    <https://laya.convaiinnovations.com/>.
+7. **Check the script before you trust the confidence.** Handed a script it was not trained
+   on, the English checkpoint reported **0.952 confidence at 0.000 accuracy** on Khmer. A
+   confidence gate cannot catch this: the number is high and the answer is wrong. `ask()`
+   measures the script first, marks the answer `out_of_script`, and `decide()` then abstains
+   whatever the threshold. Use `checkpoint="multilingual"` for non-Latin text, and calibrate
+   that separately — one threshold does not transfer across languages. Source:
+   <https://www.eesel.ai/blog/laya-ai-review>.
 
 ## How to design a feature with it
 

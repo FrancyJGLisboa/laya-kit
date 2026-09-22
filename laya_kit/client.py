@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+import unicodedata
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
@@ -20,6 +21,13 @@ CHECKPOINTS = {"typed-decisions", "multilingual"}   # anything else loads the de
 DEFAULT_CHECKPOINT = os.environ.get("LAYA_CHECKPOINT", "typed-decisions")
 MAX_STATE_CHARS = int(os.environ.get("LAYA_MAX_STATE_CHARS", "2000"))
 MAX_CHOICE_OPTIONS = int(os.environ.get("LAYA_MAX_CHOICE_OPTIONS", "20"))
+
+# The English checkpoints do not degrade gracefully off their script: on Khmer the published
+# model reported 0.952 confidence at 0.000 accuracy. Confidence cannot catch that, so the
+# script is checked before the call and the gate refuses the answer outright.
+MULTILINGUAL_CHECKPOINTS = {"multilingual"}
+NON_LATIN_LIMIT = float(os.environ.get("LAYA_NON_LATIN_LIMIT", "0.2"))
+SCRIPT_GUARD = os.environ.get("LAYA_SCRIPT_GUARD", "on").lower() not in {"off", "0", "false"}
 
 _LOCK = threading.Lock()
 _AGENTS: dict[str, Any] = {}
@@ -51,6 +59,41 @@ def warm(checkpoint: str = DEFAULT_CHECKPOINT) -> float:
     started = time.perf_counter()
     load(checkpoint)
     return time.perf_counter() - started
+
+
+# --- script ------------------------------------------------------------------------------
+
+def _script_of(character: str) -> str | None:
+    try:
+        name = unicodedata.name(character)
+    except ValueError:
+        return None
+    return name.split(" ")[0]
+
+
+def non_latin(text: str) -> tuple[float, str | None]:
+    """Share of letters outside the Latin script, and the dominant one.
+
+    Pure Python, no model needed. A checkpoint trained on one script will answer confidently
+    about text in another and be wrong, so this runs before the call, not after.
+    """
+    counts: dict[str, int] = {}
+    letters = 0
+    for character in text:
+        if not character.isalpha():
+            continue
+        script = _script_of(character)
+        if script is None:
+            continue
+        letters += 1
+        counts[script] = counts.get(script, 0) + 1
+    if not letters:
+        return 0.0, None
+    foreign = {k: v for k, v in counts.items() if k != "LATIN"}
+    if not foreign:
+        return 0.0, None
+    dominant = max(foreign, key=lambda k: foreign[k])
+    return sum(foreign.values()) / letters, dominant
 
 
 # --- questions ---------------------------------------------------------------------------
@@ -109,6 +152,8 @@ class Answer:
     probabilities: Mapping[str, float] = field(default_factory=dict)
     native_confidence: float | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
+    out_of_script: bool = False       # state is off the checkpoint's script: decide() refuses it
+    script: str | None = None
 
     def above(self, threshold: float) -> bool:
         return self.confidence is not None and self.confidence >= threshold
@@ -137,7 +182,8 @@ def _compact(state: Any, max_chars: int) -> Any:
     return text[:max_chars]
 
 
-def _answer(question_id: str, question: Mapping[str, Any], raw: Mapping[str, Any]) -> Answer:
+def _answer(question_id: str, question: Mapping[str, Any], raw: Mapping[str, Any],
+            *, out_of_script: bool = False, script: str | None = None) -> Answer:
     kind = question.get("type", "choice")
     probabilities = {str(k): float(v) for k, v in (raw.get("probabilities") or {}).items()}
     native = raw.get("confidence")
@@ -156,7 +202,8 @@ def _answer(question_id: str, question: Mapping[str, Any], raw: Mapping[str, Any
             picked = str(int(max(0, min(len(levels) - 1, round(value)))))
     return Answer(question_id=question_id, type=kind, choice=picked, value=value,
                   confidence=confidence, probabilities=probabilities,
-                  native_confidence=float(native) if native is not None else None, raw=dict(raw))
+                  native_confidence=float(native) if native is not None else None, raw=dict(raw),
+                  out_of_script=out_of_script, script=script)
 
 
 def ask(state: Any, questions: Mapping[str, Mapping[str, Any]], *,
@@ -164,6 +211,19 @@ def ask(state: Any, questions: Mapping[str, Mapping[str, Any]], *,
     """Ask every question about one state. One model call per question, as Laya prefers."""
     agent = load(checkpoint)
     compact = _compact(state, max_state_chars)
+    out_of_script, script = False, None
+    if SCRIPT_GUARD and checkpoint not in MULTILINGUAL_CHECKPOINTS:
+        text = compact if isinstance(compact, str) else json.dumps(compact, ensure_ascii=False, default=str)
+        share, script = non_latin(text)
+        out_of_script = share > NON_LATIN_LIMIT
+        if out_of_script:
+            warnings.warn(
+                f"{share:.0%} of this state is {script} script and checkpoint {checkpoint!r} is "
+                f"English-only; every answer is marked out_of_script and decide() will abstain. "
+                f"Use checkpoint='multilingual' for this text (LAYA_SCRIPT_GUARD=off disables).",
+                UserWarning,
+                stacklevel=2,
+            )
     answers: dict[str, Answer] = {}
     for question_id, question in questions.items():
         with _LOCK:
@@ -171,7 +231,8 @@ def ask(state: Any, questions: Mapping[str, Mapping[str, Any]], *,
         raw = (result.get("answers") or {}).get(question_id)
         if not isinstance(raw, Mapping):
             raise RuntimeError(f"laya returned no answer for {question_id!r}")
-        answers[question_id] = _answer(question_id, question, raw)
+        answers[question_id] = _answer(question_id, question, raw,
+                                       out_of_script=out_of_script, script=script)
     return answers
 
 

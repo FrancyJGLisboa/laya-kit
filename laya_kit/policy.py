@@ -6,7 +6,11 @@ worth keeping even in a small script:
 1. **Abstain by threshold, not by hoping the model refuses.** Measured on 110 labelled decisions,
    Laya's `typed-decisions` checkpoint chose the "cannot tell" option zero times, even when the
    criterion invited it. Every abstention has to come from the confidence gate.
-2. **Never let a threshold fall to zero.** On a small sample every confidence band can look
+2. **Confidence cannot see out-of-distribution input.** An English checkpoint handed another
+   script answers confidently and wrongly -- 0.952 confidence at 0.000 accuracy on Khmer. That
+   is checked before the call, and an answer carrying ``out_of_script`` is refused here whatever
+   its confidence says.
+3. **Never let a threshold fall to zero.** On a small sample every confidence band can look
    perfect, and the rule then returns the lowest floor, leaving the decision ungated. That is
    overfitting, not a licence: `MIN_THRESHOLD` floors it.
 """
@@ -35,6 +39,9 @@ class Gate:
 
 def decide(answer: Answer, threshold: float | None) -> Gate:
     """Apply a calibrated threshold. No threshold means abstain: uncalibrated is not permission."""
+    if getattr(answer, "out_of_script", False):
+        return Gate(answer, None, True, threshold,
+                    f"out_of_script:{(answer.script or 'non-latin').lower()}")
     if threshold is None:
         return Gate(answer, None, True, None, "uncalibrated")
     confidence = answer.confidence if answer.confidence is not None else 0.0

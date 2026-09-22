@@ -71,6 +71,23 @@ docs. They are the difference between a demo and something you can rely on.
 4. **`typed-decisions` is the checkpoint to use.** The general `english` one scored 78.2% against
    93.6% on the same questions. Set `LAYA_CHECKPOINT` if you want to compare for yourself.
 
+## Scripts
+
+The English checkpoints do not fail quietly off their script — they fail confidently. On Khmer
+the published model reported 0.952 confidence at 0.000 accuracy, which no confidence gate can
+catch. So `ask()` measures the script of the state before the call, marks every answer
+`out_of_script`, and `decide()` abstains regardless of the threshold:
+
+```python
+answers = ask(khmer_text, questions)          # warns
+answers["kind"].out_of_script                 # True
+decide(answers["kind"], 0.8).reason           # "out_of_script:khmer"
+```
+
+Use `checkpoint="multilingual"` for that text and calibrate it separately: a threshold fitted on
+English does not transfer. `non_latin(text)` is the check on its own, and `LAYA_NON_LATIN_LIMIT`
+(0.2) and `LAYA_SCRIPT_GUARD=off` tune or disable it.
+
 ## How good is it
 
 One measured domain, 110 labelled decisions: **93.6%** raw agreement against **97.3%** for a
@@ -87,7 +104,7 @@ Speed: about 1.5 s per question per item on a laptop CPU, milliseconds on a GPU.
 ## As an agent skill
 
 `skills/laya/SKILL.md` teaches Claude Code, Codex, Copilot and Gemini when a local classifier
-is the right tool, how to write questions for a 512–1024 token context, and the six rules
+is the right tool, how to write questions for a 512–1024 token context, and the seven rules
 below. Install it alongside the package:
 
 ```bash
