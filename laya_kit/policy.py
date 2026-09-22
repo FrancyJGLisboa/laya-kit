@@ -10,12 +10,18 @@ worth keeping even in a small script:
    script answers confidently and wrongly -- 0.952 confidence at 0.000 accuracy on Khmer. That
    is checked before the call, and an answer carrying ``out_of_script`` is refused here whatever
    its confidence says.
-3. **Never let a threshold fall to zero.** On a small sample every confidence band can look
+3. **One threshold per bucket.** Laya fits a temperature per (question type, option count), so a
+   confidence means what it says only inside its own bucket -- 1.76 for `choice:3-5` against 1.98
+   for `noul:2`. ``calibrate()`` refuses a history that mixes a fitted bucket with an unfitted one
+   (`choice:11+`, which the library clamps, or an unfitted checkpoint such as `multilingual`),
+   because the two numbers are not the same measurement.
+4. **Never let a threshold fall to zero.** On a small sample every confidence band can look
    perfect, and the rule then returns the lowest floor, leaving the decision ungated. That is
    overfitting, not a licence: `MIN_THRESHOLD` floors it.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -25,6 +31,10 @@ EDGES = (0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
 MIN_ACCURACY = 0.97
 MIN_SAMPLES = 30
 MIN_THRESHOLD = 0.5
+
+
+class MixedCalibration(ValueError):
+    """The labelled history spans buckets whose confidences do not mean the same thing."""
 
 
 @dataclass(frozen=True)
@@ -50,6 +60,35 @@ def decide(answer: Answer, threshold: float | None) -> Gate:
     return Gate(answer, answer.choice, False, threshold)
 
 
+def _normalise(pairs: Sequence[tuple[Any, bool]]) -> list[tuple[float, bool]]:
+    """Accept (confidence, correct) or (Answer, correct), and refuse a history of mixed buckets."""
+    seen: dict[str, bool] = {}
+    out: list[tuple[float, bool]] = []
+    for item, correct in pairs:
+        if isinstance(item, Answer):
+            out.append((item.confidence if item.confidence is not None else 0.0, bool(correct)))
+            if item.bucket is not None:
+                seen[item.bucket] = item.fitted
+        else:
+            out.append((0.0 if item is None else float(item), bool(correct)))
+    fitted = sorted(name for name, ok in seen.items() if ok)
+    unfitted = sorted(name for name, ok in seen.items() if not ok)
+    if fitted and unfitted:
+        raise MixedCalibration(
+            f"this history mixes buckets the checkpoint fitted ({', '.join(fitted)}) with buckets "
+            f"it did not ({', '.join(unfitted)}); their confidences are not the same measurement. "
+            f"Calibrate one threshold per bucket."
+        )
+    if len(seen) > 1:
+        warnings.warn(
+            f"calibrating across {len(seen)} buckets ({', '.join(sorted(seen))}): each carries its "
+            f"own temperature, so one threshold over all of them is coarser than one per bucket.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return out
+
+
 def bins(pairs: Iterable[tuple[float, bool]], edges: Sequence[float] = EDGES) -> dict[str, dict[str, Any]]:
     """{band: {n, acc}} from (confidence, was_correct) pairs."""
     table = {f"{lo:g}-{hi:g}": {"n": 0, "hits": 0} for lo, hi in zip(edges, edges[1:])}
@@ -65,14 +104,17 @@ def bins(pairs: Iterable[tuple[float, bool]], edges: Sequence[float] = EDGES) ->
             for key, cell in table.items()}
 
 
-def calibrate(pairs: Sequence[tuple[float, bool]], *, min_accuracy: float = MIN_ACCURACY,
+def calibrate(pairs: Sequence[tuple[Any, bool]], *, min_accuracy: float = MIN_ACCURACY,
               min_samples: int = MIN_SAMPLES, min_threshold: float = MIN_THRESHOLD) -> float | None:
     """The lowest confidence band whose cumulative accuracy from the top stays >= min_accuracy.
+
+    Pairs are ``(confidence, was_correct)`` or ``(Answer, was_correct)``. Passing answers lets
+    this refuse a history whose buckets do not share a scale; raw floats cannot be checked.
 
     Returns None when there are too few labelled examples or no band qualifies: the caller must
     treat that as "abstain", never as "act".
     """
-    pairs = list(pairs)
+    pairs = _normalise(list(pairs))
     if len(pairs) < min_samples:
         return None
     table = bins(pairs)

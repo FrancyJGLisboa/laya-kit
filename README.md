@@ -71,6 +71,26 @@ docs. They are the difference between a demo and something you can rely on.
 4. **`typed-decisions` is the checkpoint to use.** The general `english` one scored 78.2% against
    93.6% on the same questions. Set `LAYA_CHECKPOINT` if you want to compare for yourself.
 
+## Buckets
+
+Laya fits one temperature per question type and option count, so a confidence only means what it
+says inside its own bucket. The shipped checkpoints soften `choice:3-5` by 1.76 and `noul:2` by
+1.98, leave `choice:6-10` at 1.0000158, and ship `choice:11+` at 0.1006 — sharp enough that the
+library refuses it and clamps to 0.5. `multilingual` fits nothing: flat 1.0, no buckets.
+
+Every answer records where its confidence came from, and `calibrate()` accepts answers as well as
+raw floats so it can act on that:
+
+```python
+threshold = calibrate([(answer, was_correct), ...])   # MixedCalibration if the buckets disagree
+answers["kind"].bucket        # "choice:3-5"
+answers["kind"].temperature   # 1.7601518630981445
+answers["kind"].fitted        # False for a clamped bucket or an unfitted checkpoint
+```
+
+One threshold per bucket. Mixing a fitted bucket with an unfitted one is refused; mixing two
+fitted buckets warns, because one threshold over both is coarser than one each.
+
 ## Scripts
 
 The English checkpoints do not fail quietly off their script — they fail confidently. On Khmer
@@ -104,7 +124,7 @@ Speed: about 1.5 s per question per item on a laptop CPU, milliseconds on a GPU.
 ## As an agent skill
 
 `skills/laya/SKILL.md` teaches Claude Code, Codex, Copilot and Gemini when a local classifier
-is the right tool, how to write questions for a 512–1024 token context, and the seven rules
+is the right tool, how to write questions for a 512–1024 token context, and the eight rules
 below. Install it alongside the package:
 
 ```bash

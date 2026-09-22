@@ -6,7 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from laya_kit import Agent, ask, calibrate, choice, decide, load, non_latin, noul, score  # noqa: E402
+from laya_kit import Agent, Answer, ask, bucket, calibrate, choice, decide, load  # noqa: E402
+from laya_kit import MixedCalibration, non_latin, noul, score  # noqa: E402
 from laya_kit import client, policy  # noqa: E402
 
 
@@ -191,3 +192,90 @@ class ScriptTests(unittest.TestCase):
                 warnings.simplefilter("always")
                 ask(KHMER, {"k": choice("q", {"a": "x", "b": "y"})})
         self.assertTrue(any("KHMER" in str(w.message) for w in caught))
+
+
+def answers_in(name, fitted, confidences):
+    return [(Answer(question_id="k", type="choice", confidence=c, bucket=name, fitted=fitted), ok)
+            for c, ok in confidences]
+
+
+class BucketTests(unittest.TestCase):
+    """A confidence means what it says only inside the bucket whose temperature produced it."""
+
+    def test_bucket_names_follow_the_option_count(self):
+        self.assertEqual([bucket("choice", n) for n in (2, 3, 5, 6, 10, 11, 77)],
+                         ["choice:2", "choice:3-5", "choice:3-5", "choice:6-10",
+                          "choice:6-10", "choice:11+", "choice:11+"])
+        self.assertEqual(bucket("noul", 2), "noul:2")
+
+    def test_answer_records_its_bucket_and_temperature(self):
+        agent = FakeAgent()
+        agent.temperature = [1.0, 1.0, 1.0]
+        agent.temperature_by_options = {"choice:3-5": 1.76, "choice:11+": 0.5}
+        agent.temperature_by_options_raw = {"choice:3-5": 1.76, "choice:11+": 0.1006}
+        with fake_laya(agent):
+            got = ask("t", {"k": choice("q", {"a": "x", "b": "y", "c": "z"})})["k"]
+        self.assertEqual((got.bucket, got.temperature, got.fitted), ("choice:3-5", 1.76, True))
+
+    def test_a_clamped_bucket_is_not_a_fit(self):
+        agent = FakeAgent()
+        agent.temperature = [1.0, 1.0, 1.0]
+        agent.temperature_by_options = {"choice:11+": 0.5}
+        agent.temperature_by_options_raw = {"choice:11+": 0.1006}
+        with fake_laya(agent):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                got = ask("t", {"k": choice("q", {str(i): "x" for i in range(12)})})["k"]
+        self.assertEqual(got.bucket, "choice:11+")
+        self.assertFalse(got.fitted)
+
+    def test_a_fit_that_landed_on_identity_is_still_a_fit(self):
+        """choice:6-10 ships 1.0000158: fitted, and the fit happens to correct nothing."""
+        agent = FakeAgent()
+        agent.temperature = [1.0, 1.0, 1.0]
+        agent.temperature_by_options = {"choice:6-10": 1.0000158548355103}
+        agent.temperature_by_options_raw = {"choice:6-10": 1.0000158548355103}
+        with fake_laya(agent):
+            got = ask("t", {"k": choice("q", {str(i): "x" for i in range(7)})})["k"]
+        self.assertEqual((got.bucket, got.fitted), ("choice:6-10", True))
+
+    def test_an_unfitted_checkpoint_is_not_a_fit(self):
+        """multilingual ships no buckets and a flat 1.0 per type: nothing was fitted."""
+        agent = FakeAgent()
+        agent.temperature = [1.0, 1.0, 1.0]
+        agent.temperature_by_options = {}
+        agent.temperature_by_options_raw = {}
+        with fake_laya(agent):
+            got = ask("t", {"k": choice("q", {"a": "x", "b": "y", "c": "z"})})["k"]
+        self.assertEqual((got.bucket, got.temperature, got.fitted), ("choice:3-5", 1.0, False))
+
+
+class MixedCalibrationTests(unittest.TestCase):
+    history = [(0.95, True)] * 20 + [(0.85, True)] * 10 + [(0.55, False)] * 10
+
+    def test_raw_floats_still_calibrate(self):
+        self.assertIsNotNone(calibrate(self.history))
+
+    def test_one_bucket_calibrates_quietly(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            threshold = calibrate(answers_in("choice:3-5", True, self.history))
+        self.assertIsNotNone(threshold)
+        self.assertEqual(caught, [])
+
+    def test_fitted_and_unfitted_buckets_are_refused(self):
+        pairs = (answers_in("choice:3-5", True, self.history)
+                 + answers_in("choice:6-10", False, self.history))
+        with self.assertRaises(MixedCalibration) as raised:
+            calibrate(pairs)
+        self.assertIn("choice:3-5", str(raised.exception))
+        self.assertIn("choice:6-10", str(raised.exception))
+
+    def test_two_fitted_buckets_warn_but_calibrate(self):
+        pairs = (answers_in("choice:3-5", True, self.history)
+                 + answers_in("noul:2", True, self.history))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            threshold = calibrate(pairs)
+        self.assertIsNotNone(threshold)
+        self.assertTrue(any("2 buckets" in str(w.message) for w in caught))

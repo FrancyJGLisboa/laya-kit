@@ -70,11 +70,11 @@ Every answer carries `.confidence`, **the winning probability**. That is the one
 that means the same thing across providers, so a threshold calibrated here transfers in
 meaning to a hosted classifier.
 
-## Seven rules
+## Eight rules
 
 The first five came from running this model over 110 labelled decisions in a real
-internal-control test, not from documentation; the last two are the model's own documented
-limits. Ignoring any of them produces a demo that does not survive contact with data.
+internal-control test, not from documentation; the last three come from the checkpoint's own
+shipped configuration. Ignoring any of them produces a demo that does not survive contact with data.
 
 1. **Write short, contrastive criteria.** The context is 512–1024 tokens. Cutting criteria
    from ~900 characters to ~330 moved raw agreement from 90.0% to 93.6% and nearly doubled
@@ -107,6 +107,12 @@ limits. Ignoring any of them produces a demo that does not survive contact with 
    whatever the threshold. Use `checkpoint="multilingual"` for non-Latin text, and calibrate
    that separately — one threshold does not transfer across languages. Source:
    <https://www.eesel.ai/blog/laya-ai-review>.
+8. **One threshold per bucket.** The checkpoint fits a temperature per question type and option
+   count, and a confidence only means what it says inside its own bucket: `choice:3-5` is
+   softened by 1.76, `noul:2` by 1.98, and `choice:11+` ships 0.1006 — so sharp the library
+   refuses it and clamps to 0.5. Every `Answer` records its `.bucket`, `.temperature` and
+   `.fitted`, and `calibrate()` raises `MixedCalibration` rather than average a fitted bucket
+   together with an unfitted one. `multilingual` fits nothing at all: flat 1.0, no buckets.
 
 ## How to design a feature with it
 

@@ -29,6 +29,11 @@ MULTILINGUAL_CHECKPOINTS = {"multilingual"}
 NON_LATIN_LIMIT = float(os.environ.get("LAYA_NON_LATIN_LIMIT", "0.2"))
 SCRIPT_GUARD = os.environ.get("LAYA_SCRIPT_GUARD", "on").lower() not in {"off", "0", "false"}
 
+# Laya fits one temperature per (question type, option count) bucket, and a confidence only means
+# what it says inside its own bucket. Some buckets ship no fit at all (an exact 1.0 is the identity)
+# and one ships a fit so sharp the library refuses it, so each answer records where it came from.
+QTYPES = {"choice": 0, "score": 1, "noul": 2}
+
 _LOCK = threading.Lock()
 _AGENTS: dict[str, Any] = {}
 
@@ -59,6 +64,45 @@ def warm(checkpoint: str = DEFAULT_CHECKPOINT) -> float:
     started = time.perf_counter()
     load(checkpoint)
     return time.perf_counter() - started
+
+
+# --- buckets -----------------------------------------------------------------------------
+
+def bucket(kind: str, options: int) -> str:
+    """The temperature bucket Laya fits: question type and option count, e.g. ``choice:3-5``."""
+    size = "2" if options <= 2 else "3-5" if options <= 5 else "6-10" if options <= 10 else "11+"
+    return f"{kind}:{size}"
+
+
+def _bucket_of(question: Mapping[str, Any]) -> str:
+    kind = question.get("type", "choice")
+    if kind == "noul":
+        return bucket("noul", 2)
+    criteria = question.get("criteria") or {}
+    return bucket(kind, len(criteria) if hasattr(criteria, "__len__") else 0)
+
+
+def _temperature(agent: Any, kind: str, name: str) -> tuple[float | None, bool]:
+    """The temperature actually applied to this bucket, and whether a fit stands behind it.
+
+    A bucket with its own entry was fitted, even where the fit landed on ~1.0 and so corrects
+    nothing (`choice:6-10` ships 1.0000158). Two cases are not fits: a bucket the library clamped,
+    because the shipped value was refused rather than applied, and a fallback to a per-type
+    temperature of exactly 1.0, which is the untouched default. Confidence from those is raw
+    softmax -- still gateable against your own labels, but not the same measurement as a fitted one.
+    """
+    applied_by_bucket = getattr(agent, "temperature_by_options", None) or {}
+    shipped_by_bucket = getattr(agent, "temperature_by_options_raw", None) or {}
+    if name in applied_by_bucket:
+        applied = float(applied_by_bucket[name])
+        shipped = float(shipped_by_bucket.get(name, applied))
+        return applied, applied == shipped
+    per_type = getattr(agent, "temperature", None) or []
+    index = QTYPES.get(kind, 0)
+    if index >= len(per_type):
+        return None, False
+    applied = float(per_type[index])
+    return applied, applied != 1.0
 
 
 # --- script ------------------------------------------------------------------------------
@@ -154,6 +198,9 @@ class Answer:
     raw: Mapping[str, Any] = field(default_factory=dict)
     out_of_script: bool = False       # state is off the checkpoint's script: decide() refuses it
     script: str | None = None
+    bucket: str | None = None         # the temperature bucket this confidence came out of
+    temperature: float | None = None  # what the checkpoint applied to it
+    fitted: bool = True               # False when that bucket was clamped or left at 1.0
 
     def above(self, threshold: float) -> bool:
         return self.confidence is not None and self.confidence >= threshold
@@ -183,7 +230,9 @@ def _compact(state: Any, max_chars: int) -> Any:
 
 
 def _answer(question_id: str, question: Mapping[str, Any], raw: Mapping[str, Any],
-            *, out_of_script: bool = False, script: str | None = None) -> Answer:
+            *, out_of_script: bool = False, script: str | None = None,
+            bucket_name: str | None = None, temperature: float | None = None,
+            fitted: bool = True) -> Answer:
     kind = question.get("type", "choice")
     probabilities = {str(k): float(v) for k, v in (raw.get("probabilities") or {}).items()}
     native = raw.get("confidence")
@@ -203,7 +252,8 @@ def _answer(question_id: str, question: Mapping[str, Any], raw: Mapping[str, Any
     return Answer(question_id=question_id, type=kind, choice=picked, value=value,
                   confidence=confidence, probabilities=probabilities,
                   native_confidence=float(native) if native is not None else None, raw=dict(raw),
-                  out_of_script=out_of_script, script=script)
+                  out_of_script=out_of_script, script=script, bucket=bucket_name,
+                  temperature=temperature, fitted=fitted)
 
 
 def ask(state: Any, questions: Mapping[str, Mapping[str, Any]], *,
@@ -231,8 +281,11 @@ def ask(state: Any, questions: Mapping[str, Mapping[str, Any]], *,
         raw = (result.get("answers") or {}).get(question_id)
         if not isinstance(raw, Mapping):
             raise RuntimeError(f"laya returned no answer for {question_id!r}")
+        name = _bucket_of(question)
+        temperature, fitted = _temperature(agent, question.get("type", "choice"), name)
         answers[question_id] = _answer(question_id, question, raw,
-                                       out_of_script=out_of_script, script=script)
+                                       out_of_script=out_of_script, script=script,
+                                       bucket_name=name, temperature=temperature, fitted=fitted)
     return answers
 
 
