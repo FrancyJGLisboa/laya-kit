@@ -73,9 +73,8 @@ meaning to a hosted classifier.
 ## Six rules
 
 The first five came from running this model over 110 labelled decisions in a real
-internal-control test, not from documentation; the sixth is a reported limit of the
-checkpoint, unmeasured here. Ignoring any of them produces a demo that does not survive
-contact with data.
+internal-control test, not from documentation; the sixth is the model's own documented
+limit. Ignoring any of them produces a demo that does not survive contact with data.
 
 1. **Write short, contrastive criteria.** The context is 512–1024 tokens. Cutting criteria
    from ~900 characters to ~330 moved raw agreement from 90.0% to 93.6% and nearly doubled
@@ -94,11 +93,13 @@ contact with data.
    `calibrate()` floors at 0.5. A gate that calibration can switch off is not a gate.
 5. **`typed-decisions` is the checkpoint.** The general `english` one scored 78.2% against
    93.6% on the same questions. Set `LAYA_CHECKPOINT` only to compare deliberately.
-6. **Keep a choice under about 20 options.** Accuracy is reported to fall off sharply as
-   the list grows — on a 77-label task, to roughly 0.42. `choice()` warns past 20
-   (`LAYA_MAX_CHOICE_OPTIONS`). Split a long list into a coarse choice plus a follow-up
-   question, or ask several `noul()` questions. This limit is reported, not measured on
-   our own data: if your list is long, calibrate before trusting it.
+6. **Keep a choice under about 20 options.** The model's own documentation says to "keep
+   choice schemas under 20 options, or use two-step coarse-to-fine hierarchy", because the
+   token budget degrades longer lists: a 77-option question scores 0.425 against a hosted
+   classifier's 0.870. `choice()` warns past 20 (`LAYA_MAX_CHOICE_OPTIONS`). Split the list
+   into a coarse choice plus a follow-up question, or ask several `noul()` questions —
+   binary questions are where this model is strongest. Source:
+   <https://laya.convaiinnovations.com/>.
 
 ## How to design a feature with it
 
