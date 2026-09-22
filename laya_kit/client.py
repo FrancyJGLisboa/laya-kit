@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping
 
@@ -18,6 +19,7 @@ REPO = "convaiinnovations/laya"
 CHECKPOINTS = {"typed-decisions", "multilingual"}   # anything else loads the default (english)
 DEFAULT_CHECKPOINT = os.environ.get("LAYA_CHECKPOINT", "typed-decisions")
 MAX_STATE_CHARS = int(os.environ.get("LAYA_MAX_STATE_CHARS", "2000"))
+MAX_CHOICE_OPTIONS = int(os.environ.get("LAYA_MAX_CHOICE_OPTIONS", "20"))
 
 _LOCK = threading.Lock()
 _AGENTS: dict[str, Any] = {}
@@ -56,10 +58,22 @@ def warm(checkpoint: str = DEFAULT_CHECKPOINT) -> float:
 def choice(instructions: str, criteria: Mapping[str, str]) -> dict[str, Any]:
     """One of N options. Give every option a concrete criterion, and include a no-match option.
 
-    Keep each criterion to a line: the model reads ~512-1024 tokens in total.
+    Keep each criterion to a line: the model reads ~512-1024 tokens in total. Keep the list
+    itself short too: accuracy degrades as the option count grows, and past about
+    MAX_CHOICE_OPTIONS this warns. Split a long list into a coarse choice plus a second
+    question, or ask several noul() questions instead.
     """
     if len(criteria) < 2:
         raise ValueError("a choice needs at least two options")
+    if len(criteria) > MAX_CHOICE_OPTIONS:
+        warnings.warn(
+            f"choice() got {len(criteria)} options; accuracy falls off past about "
+            f"{MAX_CHOICE_OPTIONS}. Split it into a coarse choice plus a follow-up question, "
+            f"or use several noul() questions. Calibrate before trusting this "
+            f"(set LAYA_MAX_CHOICE_OPTIONS to change the threshold).",
+            UserWarning,
+            stacklevel=2,
+        )
     return {"type": "choice", "instructions": instructions, "criteria": dict(criteria)}
 
 

@@ -70,10 +70,11 @@ Every answer carries `.confidence`, **the winning probability**. That is the one
 that means the same thing across providers, so a threshold calibrated here transfers in
 meaning to a hosted classifier.
 
-## Five rules, each one measured
+## Six rules
 
-These came from running this model over 110 labelled decisions in a real internal-control
-test, not from documentation. Ignoring any of them produces a demo that does not survive
+The first five came from running this model over 110 labelled decisions in a real
+internal-control test, not from documentation; the sixth is a reported limit of the
+checkpoint, unmeasured here. Ignoring any of them produces a demo that does not survive
 contact with data.
 
 1. **Write short, contrastive criteria.** The context is 512–1024 tokens. Cutting criteria
@@ -93,6 +94,11 @@ contact with data.
    `calibrate()` floors at 0.5. A gate that calibration can switch off is not a gate.
 5. **`typed-decisions` is the checkpoint.** The general `english` one scored 78.2% against
    93.6% on the same questions. Set `LAYA_CHECKPOINT` only to compare deliberately.
+6. **Keep a choice under about 20 options.** Accuracy is reported to fall off sharply as
+   the list grows — on a 77-label task, to roughly 0.42. `choice()` warns past 20
+   (`LAYA_MAX_CHOICE_OPTIONS`). Split a long list into a coarse choice plus a follow-up
+   question, or ask several `noul()` questions. This limit is reported, not measured on
+   our own data: if your list is long, calibrate before trusting it.
 
 ## How to design a feature with it
 

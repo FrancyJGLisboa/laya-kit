@@ -87,7 +87,7 @@ Speed: about 1.5 s per question per item on a laptop CPU, milliseconds on a GPU.
 ## As an agent skill
 
 `skills/laya/SKILL.md` teaches Claude Code, Codex, Copilot and Gemini when a local classifier
-is the right tool, how to write questions for a 512–1024 token context, and the five rules
+is the right tool, how to write questions for a 512–1024 token context, and the six rules
 below. Install it alongside the package:
 
 ```bash
